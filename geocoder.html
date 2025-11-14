@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OwlDoor Geocoder</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+        
+        .input-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+        
+        input, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+            font-family: monospace;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .results {
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 2px solid #e0e0e0;
+        }
+        
+        .result-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+        
+        .result-item strong {
+            color: #667eea;
+        }
+        
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #667eea;
+            margin-top: 20px;
+        }
+        
+        .coordinates {
+            font-family: monospace;
+            background: #f0f0f0;
+            padding: 8px;
+            border-radius: 4px;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🗺️ OwlDoor Geocoder</h1>
+        <p class="subtitle">Convert addresses to coordinates</p>
+        
+        <div class="input-group">
+            <label for="address">Address or Location</label>
+            <input 
+                type="text" 
+                id="address" 
+                placeholder="e.g., 123 Main St, New York, NY 10001"
+                autocomplete="off"
+            >
+        </div>
+        
+        <div class="input-group">
+            <label for="batch">Batch Geocode (one address per line)</label>
+            <textarea 
+                id="batch" 
+                placeholder="123 Main St, New York, NY&#10;456 Oak Ave, Los Angeles, CA&#10;789 Pine Rd, Chicago, IL"
+            ></textarea>
+        </div>
+        
+        <button id="geocodeBtn" onclick="geocodeAddress()">Geocode Address</button>
+        <button id="batchBtn" onclick="batchGeocode()" style="margin-top: 10px;">Batch Geocode</button>
+        
+        <div id="results" class="results" style="display: none;"></div>
+        <div id="loading" class="loading" style="display: none;">Processing...</div>
+        <div id="error" class="error" style="display: none;"></div>
+    </div>
+
+    <script>
+        // Simple geocoding using Nominatim (OpenStreetMap) - free and no API key required
+        async function geocodeAddress() {
+            const address = document.getElementById('address').value.trim();
+            if (!address) {
+                showError('Please enter an address');
+                return;
+            }
+            
+            await geocodeSingle(address);
+        }
+        
+        async function batchGeocode() {
+            const batch = document.getElementById('batch').value.trim();
+            if (!batch) {
+                showError('Please enter addresses to geocode');
+                return;
+            }
+            
+            const addresses = batch.split('\n').filter(addr => addr.trim());
+            if (addresses.length === 0) {
+                showError('No valid addresses found');
+                return;
+            }
+            
+            showLoading(true);
+            hideError();
+            hideResults();
+            
+            const results = [];
+            for (let i = 0; i < addresses.length; i++) {
+                const addr = addresses[i].trim();
+                if (!addr) continue;
+                
+                try {
+                    const result = await geocodeWithNominatim(addr);
+                    results.push({
+                        address: addr,
+                        ...result
+                    });
+                    
+                    // Rate limit: Nominatim requires max 1 request per second
+                    if (i < addresses.length - 1) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                } catch (error) {
+                    results.push({
+                        address: addr,
+                        error: error.message || 'Geocoding failed'
+                    });
+                }
+            }
+            
+            showLoading(false);
+            displayBatchResults(results);
+        }
+        
+        async function geocodeSingle(address) {
+            showLoading(true);
+            hideError();
+            hideResults();
+            
+            try {
+                const result = await geocodeWithNominatim(address);
+                showLoading(false);
+                displayResult(result);
+            } catch (error) {
+                showLoading(false);
+                showError(error.message || 'Geocoding failed. Please try again.');
+            }
+        }
+        
+        async function geocodeWithNominatim(address) {
+            // Using Nominatim (OpenStreetMap) - free, no API key required
+            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1`;
+            
+            const response = await fetch(url, {
+                headers: {
+                    'User-Agent': 'OwlDoorGeocoder/1.0'
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error('Geocoding service unavailable');
+            }
+            
+            const data = await response.json();
+            
+            if (!data || data.length === 0) {
+                throw new Error('Address not found');
+            }
+            
+            const result = data[0];
+            return {
+                latitude: parseFloat(result.lat),
+                longitude: parseFloat(result.lon),
+                formatted_address: result.display_name,
+                place_id: result.place_id
+            };
+        }
+        
+        function displayResult(result) {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = `
+                <div class="result-item">
+                    <strong>Address:</strong> ${result.formatted_address}<br>
+                    <strong>Coordinates:</strong>
+                    <div class="coordinates">
+                        Latitude: ${result.latitude.toFixed(6)}<br>
+                        Longitude: ${result.longitude.toFixed(6)}
+                    </div>
+                    <strong>Place ID:</strong> ${result.place_id}
+                </div>
+            `;
+            resultsDiv.style.display = 'block';
+        }
+        
+        function displayBatchResults(results) {
+            const resultsDiv = document.getElementById('results');
+            let html = '<h3 style="margin-bottom: 15px;">Geocoding Results</h3>';
+            
+            results.forEach((result, index) => {
+                if (result.error) {
+                    html += `
+                        <div class="result-item" style="border-left: 4px solid #c33;">
+                            <strong>#${index + 1}:</strong> ${result.address}<br>
+                            <span style="color: #c33;">Error: ${result.error}</span>
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div class="result-item">
+                            <strong>#${index + 1}:</strong> ${result.address}<br>
+                            <strong>Coordinates:</strong>
+                            <div class="coordinates">
+                                ${result.latitude.toFixed(6)}, ${result.longitude.toFixed(6)}
+                            </div>
+                            <strong>Formatted:</strong> ${result.formatted_address}
+                        </div>
+                    `;
+                }
+            });
+            
+            // Add copy button
+            html += `
+                <button onclick="copyResults()" style="margin-top: 15px; background: #28a745;">
+                    Copy Results as CSV
+                </button>
+            `;
+            
+            resultsDiv.innerHTML = html;
+            resultsDiv.style.display = 'block';
+            
+            // Store results for copying
+            window.geocodeResults = results;
+        }
+        
+        function copyResults() {
+            if (!window.geocodeResults) return;
+            
+            let csv = 'Address,Latitude,Longitude,Formatted Address\n';
+            window.geocodeResults.forEach(result => {
+                if (!result.error) {
+                    csv += `"${result.address}",${result.latitude},${result.longitude},"${result.formatted_address}"\n`;
+                }
+            });
+            
+            navigator.clipboard.writeText(csv).then(() => {
+                alert('Results copied to clipboard!');
+            });
+        }
+        
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+        
+        function hideError() {
+            document.getElementById('error').style.display = 'none';
+        }
+        
+        function hideResults() {
+            document.getElementById('results').style.display = 'none';
+        }
+        
+        // Allow Enter key to trigger geocode
+        document.getElementById('address').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                geocodeAddress();
+            }
+        });
+    </script>
+</body>
+</html>
+
